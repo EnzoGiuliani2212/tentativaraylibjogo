@@ -29,6 +29,17 @@ int main(){
     InitWindow(screenWidth, screenHeight, "Teste show"); // Inicializa a janela
     SetTargetFPS(60); // Define a taxa de quadros
     SetExitKey(KEY_NULL);//o jogo não fecha com a tecla ESC
+    InitAudioDevice();
+
+    //Música do menu
+    Music musicaMenu = LoadMusicStream("recursos/Musicatema.wav");
+    musicaMenu.looping = true;
+    SetMusicVolume(musicaMenu, 0.8f);
+    PlayMusicStream(musicaMenu);
+
+    //Som de quando alguma opção é selecionada
+    Sound Somselecao = LoadSound("recursos/Menuselect.mp3");
+    SetSoundVolume(Somselecao, 0.7f);
 
     Font customFont = LoadFont("recursos/ArialCEBoldItalic.ttf");
     Texture2D logo = LoadTexture("recursos/logo.png");
@@ -64,6 +75,10 @@ int main(){
     // Loop principal
     while (!WindowShouldClose() && !sair){
         // Acoes e desenhos acontecem aqui dentro
+
+        //Música que toca no menu principal
+        UpdateMusicStream(musicaMenu);
+
         float pulso;
 
         switch (telaAtual){
@@ -95,9 +110,12 @@ int main(){
             if (IsKeyPressed(KEY_ENTER)){
                 if (selecionado == 0){
                     telaAtual = TELA_JOGO;
+                    PlaySound(Somselecao);
+                    PauseMusicStream(musicaMenu);
                 }
                 if (selecionado == 1){
                     telaAtual = TELA_OPCOES;
+                    PlaySound(Somselecao);
                 }
                 if (selecionado == 2){
                     sair = true;
@@ -108,6 +126,7 @@ int main(){
         case TELA_JOGO:
             if (IsKeyPressed(KEY_ESCAPE)){
                 telaAtual = TELA_MENU;
+                ResumeMusicStream(musicaMenu);
             }
             break;
         case TELA_OPCOES:
@@ -159,7 +178,10 @@ int main(){
     //Limpeza de dados
     UnloadTexture(logo);
     UnloadFont(customFont);
+    UnloadMusicStream(musicaMenu);
+    UnloadSound(Somselecao);
     // Finalizacao
+    CloseAudioDevice();
     CloseWindow(); // Fecha a janela
     return 0;
 }

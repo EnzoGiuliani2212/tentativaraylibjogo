@@ -3,7 +3,7 @@
 
 CC      = gcc
 CFLAGS  = -Wall -Wextra -std=c99 -g
-LDLIBS  = -lm
+LDLIBS  = -lraylib -lm
 BINNAME = programa
 
 ifeq ($(OS),Windows_NT)
