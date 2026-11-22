@@ -8,7 +8,7 @@ LDLIBS  = -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
 # Nome do executável = nome da pasta atual
 TARGET  = $(notdir $(CURDIR))
 
-SRCS    = $(wildcard *.c)
+SRCS    = show.c arquivo.c perguntas.c jogo.c
 OBJS    = $(SRCS:.c=.o)
 
 all: $(TARGET)

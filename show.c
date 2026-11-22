@@ -16,59 +16,399 @@
 
 #include "raylib.h"
 #include <math.h>
-#include<stdio.h>  
-#include<stdlib.h>
+#include "quiz.h"
+
+#define SCREEN_WIDTH 800
+#define SCREEN_HEIGHT 450
+#define TOTAL_OPCOES 3
+#define PAINEL_WIDTH 300
 
 typedef enum{TELA_MENU, TELA_JOGO, TELA_OPCOES} Tela;
 
-int main(){
-    // Configuracao
-    const int screenWidth = 800; // Largura da janela
-    const int screenHeight = 450; // Altura da janela
+//Recursos que são carregdos no programa
+typedef struct {
+    Music musicaMenu;
+    Sound Somselecao;
+    Font FonteMenu;
+    Font FonteJogo;
+    Texture2D logo;
+    Texture2D FundoMenu;
+    Texture2D FundoJogo;
+}Recursos;
+
+typedef struct {
+    int select;
+    bool respondida;
+    int escolha;
+}Partida;
+
+
+//Layout do menu
+typedef struct {
+    int PainelX;
+    int PainelY;
+    int Painelwidth;
+    int Painelheigth;
+    float LogoWidth;
+    float LogoHeitgh;
+    int InicioOP;
+    Rectangle origem;
+    Rectangle destino;
+}Layout;
+
+//Estado do menu -> Animações e seleção
+typedef struct {
+    int selecionado;
+    float escala[TOTAL_OPCOES];
+    float deslocamento[TOTAL_OPCOES];
+    float pulso;
+}Menu;
+
+const char *MenuOP[TOTAL_OPCOES] = {"Jogar", "Opcoes", "Sair"};
+
+//Função do Load de recursos
+Recursos LoadRecursos(void){
+    Recursos r;
     
-    InitWindow(screenWidth, screenHeight, "Teste show"); // Inicializa a janela
+    //Música do menu:
+    r.musicaMenu = LoadMusicStream("recursos/Musicatema.wav");
+    r.musicaMenu.looping = true;
+    SetMusicVolume(r.musicaMenu, 0.8f);
+    PlayMusicStream(r.musicaMenu);
+    
+    //Som de selecionar:
+    r.Somselecao = LoadSound("recursos/Menuselect.mp3");
+    SetSoundVolume(r.Somselecao, 0.7f);
+
+    //Fonte e logo
+    r.FonteMenu = LoadFont("recursos/ArialCEBoldItalic.ttf");
+    r.logo = LoadTexture("recursos/logo.png");
+    SetTextureFilter(r.logo, TEXTURE_FILTER_BILINEAR);
+
+    //Fundos: Menu e Jogo
+    r.FundoMenu = LoadTexture("recursos/FundoJogo.png");
+    SetTextureFilter(r.FundoMenu,TEXTURE_FILTER_BILINEAR);
+    r.FundoJogo = LoadTexture("recursos/FundoJogo.png");
+    SetTextureFilter(r.FundoJogo, TEXTURE_FILTER_BILINEAR);
+    
+    //Fonte do Jogo: Latin-1 - acentos + aspas curvas, travessões e reticências
+    int codepoints[224 + 7];
+    int n = 0;
+
+    //32 a 255: alfabeto, letras acentuadas, números e pontuação
+    for(int c = 32; c <= 255; c++){
+        codepoints[n++] = c;
+    }
+
+    //Extras: - — ‘ ’ “ ” …
+    const int extras[] = {0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2026};
+    for (int i = 0; i < 7; i++){
+        codepoints[n++] = extras[i];
+    }
+    r.FonteJogo = LoadFontEx("recursos/ArialCEBoldItalic.ttf", 32, codepoints, n);
+    SetTextureFilter(r.FonteJogo.texture, TEXTURE_FILTER_BILINEAR);
+
+    return r;
+}
+
+//Função do Unload de recursos
+void UnloadRecursos(Recursos *r){
+    UnloadTexture(r->logo);
+    UnloadTexture(r->FundoMenu);
+    UnloadTexture(r->FundoJogo);
+    UnloadFont(r->FonteMenu);
+    UnloadFont(r->FonteJogo);
+    UnloadMusicStream(r->musicaMenu);
+    UnloadSound(r->Somselecao);
+}
+
+//Inicialização do layout e do menu
+Layout CalcularLayout(const Recursos *r){
+    Layout l;
+
+    //Dados do painel vermelho do menu:
+    l.PainelX = 0;
+    l.PainelY = 0;
+    l.Painelwidth = PAINEL_WIDTH;
+    l.Painelheigth = SCREEN_HEIGHT;
+
+    //Dados do Logo
+    l.LogoWidth = l.Painelwidth - 40;
+    l.LogoHeitgh = l.LogoWidth * r->logo.height/r->logo.width;
+    l.InicioOP = 40 + (int)l.LogoHeitgh + 40;
+    l.origem = (Rectangle){0, 0, (float)l.LogoWidth, (float)l.LogoHeitgh};
+    l.destino = (Rectangle){l.PainelX + (l.Painelwidth - l.LogoWidth)/2, 40, l.LogoWidth, l.LogoHeitgh};
+    
+    return l;
+}
+
+Menu criarMenu(void){
+    Menu m;
+    m.selecionado = 0;
+    m.pulso = 1.0f;
+    for (int i = 0; i < TOTAL_OPCOES; i++){
+        m.escala[i] = 1.0f;
+        m.deslocamento[i] = 0.0f;
+    }
+    
+    return m;
+}
+
+//Atualização do menu
+void atualMenu(Menu *m, Tela *telaAtual, bool *sair, const Recursos *r){
+    //Navegação entre as opções
+    if (IsKeyPressed(KEY_DOWN)){
+        m->selecionado++;
+        if (m->selecionado >= TOTAL_OPCOES){
+            m->selecionado = 0;
+        }
+    }
+    if (IsKeyPressed(KEY_UP)){
+        m->selecionado--;
+        if (m->selecionado < 0){
+            m->selecionado = TOTAL_OPCOES - 1;
+        }
+    }
+    
+    //Animação das opções
+    float dt = GetFrameTime();
+    for (int i = 0; i < TOTAL_OPCOES; i++){
+        float alvoEscala = (i == m->selecionado) ? 1.3f : 1.0f;
+        float alvoDesloc = (i == m->selecionado) ? 20.0f : 0.0f;
+
+        m->escala[i] += (alvoEscala - m->escala[i]) * 10.0f * dt; 
+        m->deslocamento[i] += (alvoDesloc - m->deslocamento[i]) * 10.0f * dt;
+    }
+    m->pulso = 1.0f + sinf((float)GetTime() * 5.0f) * 0.05f;
+
+    //Confirmar a opção
+    if (IsKeyPressed(KEY_ENTER)){
+        if (m->selecionado == 0){
+            *telaAtual = TELA_JOGO;
+            PlaySound(r->Somselecao);
+            PauseMusicStream(r->musicaMenu);
+        }
+        if (m->selecionado == 1){
+            *telaAtual = TELA_OPCOES;
+            PlaySound(r->Somselecao);
+        }
+        if (m->selecionado == 2){
+            *sair = true;
+        }
+        
+    }
+    
+}
+
+void atualJogo(Tela *telaAtual, const Recursos *r, Partida *partida){
+    
+    if (!partida->respondida){
+        if (IsKeyPressed(KEY_DOWN)){
+            partida->select++;
+            if (partida->select > 3){
+                partida->select = 0;
+            }
+        }
+        if (IsKeyPressed(KEY_UP)){
+            partida->select--;
+            if (partida->select < 0){
+                partida->select = 3;
+            }
+        }
+        if (IsKeyPressed(KEY_ENTER)){
+            partida->escolha = partida->select;
+            partida->respondida = true;
+            PlaySound(r->Somselecao);
+        }
+    }
+    
+    if (IsKeyPressed(KEY_ESCAPE)){
+        *partida = (Partida){0}; //zera a seleção para a próxima vez
+        *telaAtual = TELA_MENU;
+        ResumeMusicStream(r->musicaMenu);
+    }
+}
+
+void atualOpcoes(Tela *telaAtual){
+    if (IsKeyPressed(KEY_ESCAPE)){
+        *telaAtual = TELA_MENU;
+    }
+}
+
+//Desenhos da tela: Menu, Opções e Jogo
+void DesenhoMenu(const Menu *m, const Recursos *r, const Layout *l){
+    ClearBackground(BLACK);
+    
+    //Fundo do show do milhão
+    DrawTexturePro(r->FundoMenu, 
+    (Rectangle){0, 0, (float)r->FundoMenu.width, (float)r->FundoMenu.height},
+    (Rectangle){0, 0, SCREEN_WIDTH, SCREEN_HEIGHT},
+    (Vector2){0, 0}, 0.0f, WHITE);
+    
+    //Painel vermelho do menu
+    DrawRectangle(l->PainelX, l->PainelY, l->Painelwidth, l->Painelheigth, RED);
+
+    //Logo do show do milhão
+    DrawTexturePro(r->logo, l->origem, l->destino, (Vector2){0, 0}, 0.0f, WHITE);
+
+    //Opções que tem no menu
+    for (int i = 0; i < TOTAL_OPCOES; i++){
+        float fator = m->escala[i] * ((i == m->selecionado) ? m->pulso : 1.0f);
+        int tamFonte = (int)(30 * fator);
+        Vector2 tam = MeasureTextEx(r->FonteMenu, MenuOP[i], tamFonte, 2);
+
+        float X = l->PainelX + (l->Painelwidth - tam.x) / 2 + (int)m->deslocamento[i];
+        float Y = l->InicioOP + i * 50 - (tamFonte - 30)/2;
+
+        Color cor = (i == m->selecionado) ? YELLOW : WHITE;
+        DrawTextEx(r->FonteMenu, MenuOP[i], (Vector2){X, Y}, 30, 2, cor);
+    }
+}
+
+float Textoquebrado(Font fonte, const char *texto, float x, float y, float WidthMAX, float tam, Color cor, bool desenhar){
+    char linha[512] = "";
+    char palavra[256];
+    char teste[768];
+    float linhaHeight = tam * 1.2f;
+    const char *p = texto;
+
+    while (*p){
+        //Pula os espaços
+        while (*p == ' '){
+            p++;
+        }
+        if (*p == '\0'){
+            break;
+        }
+
+        //Pega a próxima palavra
+        int n = 0;
+        while (p[n] != '\0' && p[n] != ' ' && n < 255){
+            n++;
+        }
+        memcpy(palavra, p, n);
+        palavra[n] = '\0';
+        p += n;
+
+        //Testa se a palavra cabe na linha atual
+        if (linha[0] != '\0'){
+            snprintf(teste, sizeof(teste), "%s %s", linha, palavra);
+        }else{
+            snprintf(teste, sizeof(teste), "%s", palavra);
+        }
+        
+        if (linha[0] != '\0' && MeasureTextEx(fonte, teste, tam, 1).x > WidthMAX){
+            //Não coube: desenha a linha pronta e começa outra com essa palavra
+            if (desenhar){
+                DrawTextEx(fonte, linha, (Vector2){x, y}, tam, 1, cor);
+            }
+            
+            y += linhaHeight;
+            snprintf(linha, sizeof(linha), "%s", palavra); 
+        }else{
+            size_t len = strlen(teste);
+            if (len >= sizeof(linha)){
+                memcpy(linha, teste, len);
+                linha[len] = '\0';
+            }
+        }
+    }
+
+    if (linha[0] != '\0'){
+        DrawTextEx(fonte, linha, (Vector2){x, y}, tam, 1, cor);
+        y += linhaHeight;
+    }
+    
+    return y;
+}
+
+void DesenhoJogo(const Recursos *r, const Quiz *Perguntas, int total, const Partida *partida){
+    ClearBackground(DARKBLUE);
+
+    DrawTexturePro(r->FundoJogo,
+    (Rectangle){0, 0, (float)r->FundoJogo.width, (float)r->FundoJogo.height},
+    (Rectangle){0, 0, SCREEN_WIDTH, SCREEN_HEIGHT},
+    (Vector2){0, 0}, 0.0f, WHITE);
+    
+    if (total == 0){
+        DrawTextEx(r->FonteJogo, "Nenhuma pergunta carregada!", (Vector2){20, 20}, 24, 1, WHITE);
+        return;
+    }
+    
+    const Quiz *p = &Perguntas[0]; //Por enquanto sempre a primeira pergunta
+    char texto[200];
+    
+    snprintf(texto, sizeof(texto), "Dificuldade: %s", F_Nome_Dificuldade(p->dificuldade));
+    DrawTextEx(r->FonteJogo, texto, (Vector2){20, 12}, 18, 1, YELLOW);
+
+    //Enunciado
+    Textoquebrado(r->FonteJogo, p->enunciado, 20, 58, 760, 20, WHITE, true);
+    
+    //Alternativas: A a D
+    for (int i = 0; i < 4; i++){
+        Rectangle caixa = {20, 165 + i * 52, 760, 46};
+        
+        Color fundo = (Color){15, 25, 110, 255};
+        Color borda = (Color){200, 200, 255, 255};
+        Color corTexto = WHITE;
+
+        if (!partida->respondida){
+            //A caixa selecionada fica dourada
+            if (i == partida->select){
+                fundo = (Color){255, 200, 40, 255};
+                borda = WHITE;
+                corTexto = BLACK;
+            }
+        }else{
+            //A certa fica verde e a errada fica vermelha
+            if ('A' + i == p->alternativa_correta){
+                fundo = (Color){0, 150, 60, 255};
+                borda = WHITE;
+            }else if (i == partida->escolha){
+                fundo = (Color){190, 30, 30, 255};
+                borda = WHITE;
+            }
+        }
+        
+        DrawRectangleRec(caixa, fundo);
+        DrawRectangleLinesEx(caixa, 2, borda);
+
+        snprintf(texto, sizeof(texto), "%c) %s", 'A' + i, p->alternativas[i]);
+        float Altura = Textoquebrado(r->FonteJogo, texto, 0, 0, 730, 18, corTexto, false);
+        float ty = caixa.y + (caixa.height - Altura)/2;
+        Textoquebrado(r->FonteJogo, texto, caixa.x + 15, ty, 730, 18, corTexto, true);
+    }
+    
+    DrawTextEx(r->FonteJogo,"Pressione ESC para voltar ao menu", (Vector2){20, 420}, 14, 1, LIGHTGRAY);
+    
+}
+
+void Desenhoopcoes(void){   
+    ClearBackground(DARKGRAY);
+    DrawText("OPÇÕES", 300, 200, 40, WHITE);
+    DrawText("Pressione ESC para voltar ao menu", 280, 260, 20, WHITE);
+
+}
+
+//main
+int main(){
+    
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Teste show"); // Inicializa a janela
     SetTargetFPS(60); // Define a taxa de quadros
     SetExitKey(KEY_NULL);//o jogo não fecha com a tecla ESC
     InitAudioDevice();
 
-    //Música do menu
-    Music musicaMenu = LoadMusicStream("recursos/Musicatema.wav");
-    musicaMenu.looping = true;
-    SetMusicVolume(musicaMenu, 0.8f);
-    PlayMusicStream(musicaMenu);
+    //Recursos, Layout e estado inicial:
+    Recursos recursos = LoadRecursos();
+    Layout layout = CalcularLayout(&recursos);
+    Menu menu = criarMenu();
 
-    //Som de quando alguma opção é selecionada
-    Sound Somselecao = LoadSound("recursos/Menuselect.mp3");
-    SetSoundVolume(Somselecao, 0.7f);
+    FILE *arqPerguntas = NULL;
+    int totalPerguntas = 0;
+    Quiz *perguntas = F_Inicializa_Sistema(&arqPerguntas, &totalPerguntas);
 
-    Font customFont = LoadFont("recursos/ArialCEBoldItalic.ttf");
-    Texture2D logo = LoadTexture("recursos/logo.png");
-    SetTextureFilter(logo, TEXTURE_FILTER_BILINEAR);
+    Partida partida = {0};
 
-    //Opções do menu
-    const char *Menuop[] = {"Jogar", "Opcoes", "Sair"};
-    const int totalop = 3;
-    int selecionado = 0;
-
-    //Painel Vermelho do menu
-    int PainelRedX = 0;
-    int PainelRedY = 0;
-    int PainelWidth = 300;
-    int PainelHeight = screenHeight;
-
-    //Cálculo do Logo
-    float logoWidth = PainelWidth - 40;
-    float logoHeight = logoWidth * logo.height / logoWidth;
-    int InicioOp = 40 + (int)logoHeight + 40;
-
-    Rectangle origem = {0, 0, (float)logoWidth, (float)logoHeight};
-    Rectangle destino = {PainelRedX + (PainelWidth - logoWidth) / 2, 40, logoWidth, logoHeight};
-
-    //Animação das opções
-    float escala[3] = {1.0f, 1.0f, 1.0f};
-    float deslocamento[3] = {0.0f, 0.0f, 0.0f};
-
-    //Funcionamento do menu
     Tela telaAtual = TELA_MENU;
     bool sair = false;
 
@@ -77,98 +417,30 @@ int main(){
         // Acoes e desenhos acontecem aqui dentro
 
         //Música que toca no menu principal
-        UpdateMusicStream(musicaMenu);
-
-        float pulso;
+        UpdateMusicStream(recursos.musicaMenu);
 
         switch (telaAtual){
         case TELA_MENU:
-            
-            if (IsKeyPressed(KEY_DOWN)){
-                selecionado++;
-                if(selecionado >= totalop){
-                    selecionado = 0;
-                }
-            }
-            if (IsKeyPressed(KEY_UP)){
-                selecionado--;
-                if(selecionado < 0){
-                    selecionado = totalop - 1;
-                }
-            }
-
-            float dt = GetFrameTime();
-            for (int i = 0; i < totalop; i++){
-                float alvoEscala = (i == selecionado) ? 1.3f : 1.0f;
-                float alvoDesloc = (i == selecionado) ? 20.0f : 0.0f;
-
-                escala[i] += (alvoEscala - escala[i]) * 10.0f * dt;
-                deslocamento[i] += (alvoDesloc - deslocamento[i]) * 10.0f * dt;
-            }
-            pulso = 1.0f + sinf((float)GetTime() * 5.0f) * 0.05f;
-
-            if (IsKeyPressed(KEY_ENTER)){
-                if (selecionado == 0){
-                    telaAtual = TELA_JOGO;
-                    PlaySound(Somselecao);
-                    PauseMusicStream(musicaMenu);
-                }
-                if (selecionado == 1){
-                    telaAtual = TELA_OPCOES;
-                    PlaySound(Somselecao);
-                }
-                if (selecionado == 2){
-                    sair = true;
-                }
-                
-            }
+            atualMenu(&menu, &telaAtual, &sair, &recursos);
             break;
         case TELA_JOGO:
-            if (IsKeyPressed(KEY_ESCAPE)){
-                telaAtual = TELA_MENU;
-                ResumeMusicStream(musicaMenu);
-            }
+            atualJogo(&telaAtual, &recursos, &partida);
             break;
         case TELA_OPCOES:
-            if (IsKeyPressed(KEY_ESCAPE)){
-                telaAtual = TELA_MENU;
-            }
+            atualOpcoes(&telaAtual);
             break;
         }
         
         BeginDrawing();
             switch (telaAtual){
             case TELA_MENU:
-                ClearBackground(BLACK);//background
-
-                //Painel vermelho do menu
-                DrawRectangle(PainelRedX, PainelRedY, PainelWidth, PainelHeight, RED);
-
-                //Logo do show do milhao
-                DrawTexturePro(logo, origem, destino, (Vector2){0,0}, 0.0f, WHITE);
-
-                //Opções que tem no menu
-                for (int i = 0; i < totalop; i++){
-                    float fator = escala[i] * ((i == selecionado) ? pulso : 1.0f);
-                    int tamFonte = (int)(30 * fator);
-                    Vector2 tam = MeasureTextEx(customFont, Menuop[i], tamFonte, 2);
-
-                    float X = PainelRedX + (PainelWidth - tam.x)/2 + (int)deslocamento[i];
-                    int Y = InicioOp + i * 50 - (tamFonte - 30) / 2;
-
-                    Color cor = (i == selecionado) ? YELLOW : WHITE;
-                    DrawTextEx(customFont, Menuop[i], (Vector2){X,Y}, 30, 2, cor);
-                }
+                DesenhoMenu(&menu, &recursos, &layout);
                 break;
             case TELA_JOGO:
-                ClearBackground(DARKBLUE);
-                DrawText("TELA DO JOGO", 250, 200, 40, WHITE);
-                DrawText("Pressione ESC para voltar", 280, 260, 20, LIGHTGRAY);
+                DesenhoJogo(&recursos, perguntas ,totalPerguntas, &partida);
                 break;
             case TELA_OPCOES:
-                ClearBackground(DARKGREEN);
-                DrawText("OPÇÕES", 300, 200, 40, WHITE);
-                DrawText("Pressione ESC para voltar", 280, 260, 20, LIGHTGRAY);
+                Desenhoopcoes();
                 break;
             }
             
@@ -176,10 +448,8 @@ int main(){
     }
 
     //Limpeza de dados
-    UnloadTexture(logo);
-    UnloadFont(customFont);
-    UnloadMusicStream(musicaMenu);
-    UnloadSound(Somselecao);
+    free(perguntas);
+    UnloadRecursos(&recursos);
     // Finalizacao
     CloseAudioDevice();
     CloseWindow(); // Fecha a janela
